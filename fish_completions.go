@@ -110,6 +110,8 @@ function __%[1]s_prepare_completions
     set shellCompDirectiveNoFileComp %[6]d
     set shellCompDirectiveFilterFileExt %[7]d
     set shellCompDirectiveFilterDirs %[8]d
+    set shellCompDirectiveLegacyCustomComp %[9]d
+    set shellCompDirectiveLegacyCustomArgsComp %[10]d
 
     if test -z "$directive"
         set directive 0
@@ -119,6 +121,15 @@ function __%[1]s_prepare_completions
     if test $compErr -eq 1
         __%[1]s_debug "Received error directive: aborting."
         # Might as well do file completion, in case it helps
+        set --global __%[1]s_comp_do_file_comp 1
+        return 1
+    end
+
+    set legacyCustom (math (math --scale 0 $directive / $shellCompDirectiveLegacyCustomComp) %% 2)
+    set legacyCustomArgs (math (math --scale 0 $directive / $shellCompDirectiveLegacyCustomArgsComp) %% 2)
+    if test $legacyCustom -eq 1; or test $legacyCustomArgs -eq 1
+        __%[1]s_debug "Legacy bash custom completion not applicable to fish"
+        # Do full file completion instead
         set --global __%[1]s_comp_do_file_comp 1
         return 1
     end
@@ -183,7 +194,8 @@ complete -c %[2]s -n '__%[1]s_prepare_completions' -f -a '$__%[1]s_comp_results'
 
 `, nameForVar, name, compCmd,
 		ShellCompDirectiveError, ShellCompDirectiveNoSpace, ShellCompDirectiveNoFileComp,
-		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs))
+		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs,
+		shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp))
 }
 
 // GenFishCompletion generates fish completion file and writes to the passed writer.

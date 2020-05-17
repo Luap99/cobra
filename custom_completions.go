@@ -51,6 +51,11 @@ const (
 	// obtain the same behavior but only for flags.
 	ShellCompDirectiveFilterDirs
 
+	// For internal use only.
+	// Used to maintain backwards-compatibility with the legacy bash custom completions.
+	shellCompDirectiveLegacyCustomComp
+	shellCompDirectiveLegacyCustomArgsComp
+
 	// ===========================================================================
 
 	// All directives using iota should be above this one.
@@ -93,6 +98,12 @@ func (d ShellCompDirective) string() string {
 	}
 	if d&ShellCompDirectiveFilterDirs != 0 {
 		directives = append(directives, "ShellCompDirectiveFilterDirs")
+	}
+	if d&shellCompDirectiveLegacyCustomComp != 0 {
+		directives = append(directives, "shellCompDirectiveLegacyCustomComp")
+	}
+	if d&shellCompDirectiveLegacyCustomArgsComp != 0 {
+		directives = append(directives, "shellCompDirectiveLegacyCustomArgsComp")
 	}
 	if len(directives) == 0 {
 		directives = append(directives, "ShellCompDirectiveDefault")
@@ -362,6 +373,10 @@ func (c *Command) getCompletions(args []string) (*Command, []string, ShellCompDi
 		var comps []string
 		comps, directive = completionFn(finalCmd, finalArgs, toComplete)
 		completions = append(completions, comps...)
+	} else {
+		// If there is no Go custom completion defined, check for legacy bash
+		// custom completion to preserve backwards-compatibility
+		completions, directive = checkLegacyCustomCompletion(finalCmd, finalArgs, flag, completions, directive)
 	}
 
 	return finalCmd, completions, directive, nil
@@ -511,6 +526,61 @@ func findFlag(cmd *Command, name string) *pflag.Flag {
 		}
 	}
 	return cmd.Flag(name)
+}
+
+// This function checks if legacy bash custom completion should be performed and if so,
+// it provides the shell script with the necessary information.
+func checkLegacyCustomCompletion(cmd *Command, args []string, flag *pflag.Flag, completions []string, directive ShellCompDirective) ([]string, ShellCompDirective) {
+	// Check if any legacy custom completion is defined for the program
+	if len(cmd.Root().BashCompletionFunction) > 0 {
+		// Legacy custom completion is only triggered if no other completions were found.
+		if len(completions) == 0 {
+			if flag != nil {
+				// For legacy custom flag completion, we must let the script know the bash
+				// functions it should call based on the content of the annotation BashCompCustom.
+				if values, present := flag.Annotations[BashCompCustom]; present {
+					if len(values) > 0 {
+						handlers := strings.Join(values, "; ")
+						// We send the commands to set the shell variables that are needed
+						// for legacy custom completions followed by the functions to call
+						// to perform the actual flag completion
+						completions = append(prepareLegacyCustomCompletionVars(cmd, args), handlers)
+						directive = directive | shellCompDirectiveLegacyCustomComp
+					}
+				}
+			} else {
+				// Check if the legacy custom_func is defined.
+				// This check will work for both "__custom_func" and "__<program>_custom_func".
+				// This could happen if the program defined some functions for legacy flag completion
+				// but not the legacy custom_func.
+				if strings.Contains(cmd.Root().BashCompletionFunction, "_custom_func") {
+					// For legacy args completion, the script already knows what to call
+					// so we only need to tell it the commands to set the shell variables needed
+					completions = prepareLegacyCustomCompletionVars(cmd, args)
+					directive = directive | shellCompDirectiveLegacyCustomComp | shellCompDirectiveLegacyCustomArgsComp
+				}
+			}
+		}
+	}
+	return completions, directive
+}
+
+// The original bash completion script had some shell variables that are used by legacy bash
+// custom completions.  Let's set those variables to allow those legacy custom completions
+// to continue working.
+func prepareLegacyCustomCompletionVars(cmd *Command, args []string) []string {
+	var compVarCmds []string
+
+	// "last_command" variable
+	commandName := cmd.CommandPath()
+	commandName = strings.Replace(commandName, " ", "_", -1)
+	commandName = strings.Replace(commandName, ":", "__", -1)
+	compVarCmds = append(compVarCmds, fmt.Sprintf("last_command=%s", commandName))
+
+	// "nouns" array variable
+	compVarCmds = append(compVarCmds, fmt.Sprintf("nouns=(%s)", strings.Join(args, " ")))
+
+	return compVarCmds
 }
 
 // CompDebug prints the specified string to the same file as where the

@@ -9,7 +9,11 @@ import (
 
 func (c *Command) genBashCompletion(w io.Writer, includeDesc bool) error {
 	buf := new(bytes.Buffer)
+	if len(c.BashCompletionFunction) > 0 {
+		buf.WriteString(c.BashCompletionFunction + "\n")
+	}
 	genBashComp(buf, c.Name(), includeDesc)
+
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -46,6 +50,8 @@ __%[1]s_perform_completion()
     local shellCompDirectiveNoFileComp=%[5]d
     local shellCompDirectiveFilterFileExt=%[6]d
     local shellCompDirectiveFilterDirs=%[7]d
+    local shellCompDirectiveLegacyCustomComp=%[8]d
+    local shellCompDirectiveLegacyCustomArgsComp=%[9]d
 
     local out requestComp lastParam lastChar comp directive args flagPrefix
 
@@ -132,6 +138,36 @@ __%[1]s_perform_completion()
         else
             __%[1]s_debug "Listing directories in ."
             _filedir -d
+        fi
+    elif [ $((directive & shellCompDirectiveLegacyCustomComp)) -ne 0 ]; then
+        local cmd
+        __%[1]s_debug "Legacy custom completion. Directive: $directive, cmds: ${out[*]}"
+
+        # The following variables should get their value through the commands
+        # we have received as completions and are parsing below.
+        local last_command
+        local nouns
+
+        # Execute every command received
+        while IFS='' read -r cmd; do
+            __%[1]s_debug "About to execute: $cmd"
+            eval "$cmd"
+        done < <(printf "%%s\n" "${out[@]}")
+
+        __%[1]s_debug "last_command: $last_command"
+        __%[1]s_debug "nouns[0]: ${nouns[0]}, nouns[1]: ${nouns[1]}"
+
+        if [ $((directive & shellCompDirectiveLegacyCustomArgsComp)) -ne 0 ]; then
+            # We should call the global legacy custom completion function, if it is defined
+            if declare -F __%[1]s_custom_func >/dev/null; then
+                # Use command name qualified legacy custom func
+                __%[1]s_debug "About to call: __%[1]s_custom_func"
+                __%[1]s_custom_func
+            elif declare -F __custom_func >/dev/null; then
+                # Otherwise fall back to unqualified legacy custom func for compatibility
+                __%[1]s_debug "About to call: __custom_func"
+                 __custom_func
+            fi
         fi
     else
         local tab
@@ -259,7 +295,8 @@ fi
 # ex: ts=4 sw=4 et filetype=sh
 `, name, compCmd,
 		ShellCompDirectiveError, ShellCompDirectiveNoSpace, ShellCompDirectiveNoFileComp,
-		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs))
+		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs,
+		shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp))
 }
 
 // GenBashCompletionFileV2 generates Bash completion version 2.
