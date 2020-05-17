@@ -528,6 +528,10 @@ func findFlag(cmd *Command, name string) *pflag.Flag {
 	return cmd.Flag(name)
 }
 
+func nonCompletableFlag(flag *pflag.Flag) bool {
+	return flag.Hidden || len(flag.Deprecated) > 0
+}
+
 // This function checks if legacy bash custom completion should be performed and if so,
 // it provides the shell script with the necessary information.
 func checkLegacyCustomCompletion(cmd *Command, args []string, flag *pflag.Flag, completions []string, directive ShellCompDirective) ([]string, ShellCompDirective) {
