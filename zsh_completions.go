@@ -94,6 +94,8 @@ _%[1]s()
     local shellCompDirectiveNoFileComp=%[5]d
     local shellCompDirectiveFilterFileExt=%[6]d
     local shellCompDirectiveFilterDirs=%[7]d
+    local shellCompDirectiveLegacyCustomComp=%[8]d
+    local shellCompDirectiveLegacyCustomArgsComp=%[9]d
 
     local lastParam lastChar flagPrefix requestComp out directive compCount comp lastComp
     local -a completions
@@ -161,6 +163,14 @@ _%[1]s()
     if [ $((directive & shellCompDirectiveError)) -ne 0 ]; then
         __%[1]s_debug "Completion received error. Ignoring completions."
         return
+    fi
+
+    if [ $((directive & shellCompDirectiveLegacyCustomComp)) -ne 0 ] ||
+         [ $((directive & shellCompDirectiveLegacyCustomArgsComp)) -ne 0 ]; then
+         __%[1]s_debug "Legacy bash custom completion not applicable to zsh"
+         # Do file completion instead
+         _arguments '*:filename:_files'" ${flagPrefix}"
+         return
     fi
 
     compCount=0
@@ -236,5 +246,6 @@ if [ "$funcstack[1]" = "_%[1]s" ]; then
 fi
 `, name, compCmd,
 		ShellCompDirectiveError, ShellCompDirectiveNoSpace, ShellCompDirectiveNoFileComp,
-		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs))
+		ShellCompDirectiveFilterFileExt, ShellCompDirectiveFilterDirs,
+		shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp))
 }

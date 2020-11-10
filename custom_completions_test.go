@@ -34,6 +34,28 @@ func validArgsFunc2(cmd *Command, args []string, toComplete string) ([]string, S
 	return completions, ShellCompDirectiveDefault
 }
 
+// Check that directives are printed properly
+func TestPrintDirectives(t *testing.T) {
+	directive := ShellCompDirectiveFilterDirs | ShellCompDirectiveNoFileComp | ShellCompDirectiveNoSpace
+	dirStr := directive.string()
+	if !strings.Contains(dirStr, "ShellCompDirectiveFilterDirs") ||
+		!strings.Contains(dirStr, "ShellCompDirectiveNoFileComp") ||
+		!strings.Contains(dirStr, "ShellCompDirectiveNoSpace") {
+		t.Errorf("ShellCompdirective.string() printed %s which is wrong for directive %d.", dirStr, directive)
+	}
+}
+
+// Make sure that if a new ShellCompDirective is added, we don't forget to
+// add it to ShellCompdirective.Print()
+func TestPrintDirectivesMissingDir(t *testing.T) {
+	for dirInt := 1; dirInt < int(shellCompDirectiveMaxValue); dirInt *= 2 {
+		directive := ShellCompDirective(dirInt)
+		if strings.Contains(directive.string(), "ShellCompDirectiveDefault") {
+			t.Errorf("Function ShellCompdirective.string() is not handling directive %d", directive)
+		}
+	}
+}
+
 func TestCmdNameCompletionInGo(t *testing.T) {
 	rootCmd := &Command{
 		Use: "root",
@@ -1420,24 +1442,13 @@ func TestValidArgsFuncAliases(t *testing.T) {
 	}
 }
 
-func TestValidArgsFuncInBashScript(t *testing.T) {
-	rootCmd := &Command{Use: "root", Args: NoArgs, Run: emptyRun}
-	child := &Command{
-		Use:               "child",
-		ValidArgsFunction: validArgsFunc,
-		Run:               emptyRun,
+func TestLegacyCompCodeInBashScript(t *testing.T) {
+	rootCmd := &Command{
+		Use:                    "root",
+		Args:                   NoArgs,
+		Run:                    emptyRun,
+		BashCompletionFunction: bashCompletionFunc,
 	}
-	rootCmd.AddCommand(child)
-
-	buf := new(bytes.Buffer)
-	rootCmd.GenBashCompletion(buf)
-	output := buf.String()
-
-	check(t, output, "has_completion_function=1")
-}
-
-func TestNoValidArgsFuncInBashScript(t *testing.T) {
-	rootCmd := &Command{Use: "root", Args: NoArgs, Run: emptyRun}
 	child := &Command{
 		Use: "child",
 		Run: emptyRun,
@@ -1448,7 +1459,7 @@ func TestNoValidArgsFuncInBashScript(t *testing.T) {
 	rootCmd.GenBashCompletion(buf)
 	output := buf.String()
 
-	checkOmit(t, output, "has_completion_function=1")
+	check(t, output, bashCompletionFunc)
 }
 
 func TestCompleteCmdInBashScript(t *testing.T) {
@@ -1953,6 +1964,240 @@ func TestCompleteHelp(t *testing.T) {
 		"child3",
 		":4",
 		"Completion ended with directive: ShellCompDirectiveNoFileComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+}
+func TestLegacyCustomCompArgs(t *testing.T) {
+	rootCmd := &Command{
+		Use:                    "root",
+		Args:                   NoArgs,
+		Run:                    emptyRun,
+		BashCompletionFunction: "__root_custom_func() {}",
+	}
+	child1Cmd := &Command{
+		Use: "child1",
+		Run: emptyRun,
+	}
+	child2Cmd := &Command{
+		Use: "child2",
+		Run: emptyRun,
+	}
+	rootCmd.AddCommand(child1Cmd)
+	child1Cmd.AddCommand(child2Cmd)
+
+	// Test that completion handles legacy custom args completion
+	output, err := executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "child2", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected := strings.Join([]string{
+		"last_command=root_child1_child2",
+		"nouns=()",
+		":96",
+		"Completion ended with directive: shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that completion handles legacy custom args completion with arguments
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "child2", "arg1", "arg2", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		"last_command=root_child1_child2",
+		"nouns=(arg1 arg2)",
+		":96",
+		"Completion ended with directive: shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that completion handles legacy custom args completion with legacy custom function
+	rootCmd.BashCompletionFunction = "__custom_func() {}"
+
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "child2", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		"last_command=root_child1_child2",
+		"nouns=()",
+		":96",
+		"Completion ended with directive: shellCompDirectiveLegacyCustomComp, shellCompDirectiveLegacyCustomArgsComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+}
+
+func TestLegacyCustomCompFlag(t *testing.T) {
+	rootCmd := &Command{
+		Use:                    "root",
+		Args:                   NoArgs,
+		Run:                    emptyRun,
+		BashCompletionFunction: "test_legacy_completion_flag_func() {}",
+	}
+	child1Cmd := &Command{
+		Use: "child1",
+		Run: emptyRun,
+	}
+	child2Cmd := &Command{
+		Use: "child2",
+		Run: emptyRun,
+	}
+	rootCmd.AddCommand(child1Cmd)
+	child1Cmd.AddCommand(child2Cmd)
+
+	child2Cmd.Flags().String("flag", "", "Enter a value")
+	child2Cmd.MarkFlagCustom("flag", "test_legacy_completion_flag_func")
+
+	// Test that completion handles legacy custom flag completion
+	output, err := executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "child2", "--flag", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected := strings.Join([]string{
+		"last_command=root_child1_child2",
+		"nouns=()",
+		"test_legacy_completion_flag_func",
+		":32",
+		"Completion ended with directive: shellCompDirectiveLegacyCustomComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that completion handles legacy custom flag completion with args
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "child2", "arg1", "arg2", "--flag", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		"last_command=root_child1_child2",
+		"nouns=(arg1 arg2)",
+		"test_legacy_completion_flag_func",
+		":32",
+		"Completion ended with directive: shellCompDirectiveLegacyCustomComp", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+}
+
+func TestNoLegacyCustomCompArgs(t *testing.T) {
+	rootCmd := &Command{
+		Use: "root",
+		Run: emptyRun,
+	}
+	child1Cmd := &Command{
+		Use: "child1",
+		Run: emptyRun,
+	}
+	rootCmd.AddCommand(child1Cmd)
+
+	// Test that legacy custom completion is not triggered for args when command.BashCompletionFunction is empty
+	rootCmd.BashCompletionFunction = ""
+
+	output, err := executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected := strings.Join([]string{
+		":0",
+		"Completion ended with directive: ShellCompDirectiveDefault", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that legacy custom completion is not triggered for args when
+	// __root_custom_func or __custom_func is not found
+	rootCmd.BashCompletionFunction = "__root_wrong__func() {}"
+
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		":0",
+		"Completion ended with directive: ShellCompDirectiveDefault", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that legacy custom completion is not triggered for args when other completions are found
+	rootCmd.BashCompletionFunction = "__root_custom_func() {}"
+	child1Cmd.ValidArgsFunction = func(cmd *Command, args []string, toComplete string) ([]string, ShellCompDirective) {
+		return []string{"value"}, ShellCompDirectiveDefault
+	}
+
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "child1", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		"value",
+		":0",
+		"Completion ended with directive: ShellCompDirectiveDefault", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+}
+
+func TestNoLegacyCustomCompFlag(t *testing.T) {
+	rootCmd := &Command{
+		Use: "root",
+		Run: emptyRun,
+	}
+	rootCmd.Flags().String("flag", "", "Enter a value")
+	rootCmd.MarkFlagCustom("flag", "test_legacy_completion_flag_func")
+
+	// Test that legacy custom completion is not triggered for flags when command.BashCompletionFunction is empty
+	rootCmd.BashCompletionFunction = ""
+
+	output, err := executeCommand(rootCmd, ShellCompNoDescRequestCmd, "--flag", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected := strings.Join([]string{
+		":0",
+		"Completion ended with directive: ShellCompDirectiveDefault", ""}, "\n")
+
+	if output != expected {
+		t.Errorf("expected: %q, got: %q", expected, output)
+	}
+
+	// Test that legacy custom completion is not triggered for flags when other completions are found
+	rootCmd.BashCompletionFunction = "test_legacy_completion_flag_func() {}"
+	rootCmd.RegisterFlagCompletionFunc("flag", func(cmd *Command, args []string, toComplete string) ([]string, ShellCompDirective) {
+		return []string{"value"}, ShellCompDirectiveDefault
+	})
+
+	output, err = executeCommand(rootCmd, ShellCompNoDescRequestCmd, "--flag", "")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	expected = strings.Join([]string{
+		"value",
+		":0",
+		"Completion ended with directive: ShellCompDirectiveDefault", ""}, "\n")
 
 	if output != expected {
 		t.Errorf("expected: %q, got: %q", expected, output)
